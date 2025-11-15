@@ -42,56 +42,23 @@ runs:
       shell: bash
       run: node -v
 
-    - name: Aggregate adapter outputs
-      shell: bash
-      run: |
-        node "$GITHUB_ACTION_PATH/scripts/aggregate.mjs" \
-          --input "${{ inputs.input-dir }}" \
-          --max-comments "${{ inputs.max-comments }}" \
-          --out "${{ inputs.input-dir }}/report"
-
-    - name: LLM aggregation (optional)
-      if: ${{ inputs.openai-api-key != '' }}
+    - name: Run prjury
       shell: bash
       env:
-        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        INPUT_DIR: ${{ inputs.input-dir }}
+        OPENAI_KEY: ${{ inputs.openai-api-key }}
         OPENAI_MODEL: ${{ inputs.openai-model }}
         OPENAI_BASE_URL: ${{ inputs.openai-base-url }}
-      run: |
-        node "$GITHUB_ACTION_PATH/scripts/unify-llm.mjs" \
-          --issues "${{ inputs.input-dir }}/report.json" \
-          --fallback "${{ inputs.input-dir }}/report.md" \
-          --out "${{ inputs.input-dir }}/comment.md" \
-          --model "${OPENAI_MODEL}"
-
-    - name: Post unified review
-      if: ${{ inputs.post-review == 'true' }}
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-        GH_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ inputs.pr-number }}
-        INPUT_DIR: ${{ inputs.input-dir }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
-        set -euo pipefail
-        PR="${PR_NUMBER:-${{ github.event.pull_request.number }}}"
-        if [[ -z "$PR" ]]; then
-          echo "No PR number available; skipping comment."
-          exit 0
-        fi
-
-        if [[ ! -f "$INPUT_DIR/report.md" ]]; then
-          echo "No report.md found to post; skipping."
-          exit 0
-        fi
-
-        if [[ -f "$INPUT_DIR/comment.md" ]]; then
-          body=$(cat "$INPUT_DIR/comment.md")
-        else
-          body=$(cat "$INPUT_DIR/report.md")
-        fi
-        echo "Posting unified review to PR #$PR"
-        gh api \
-          repos/${{ github.repository }}/pulls/"$PR"/reviews \
-          -f event=COMMENT \
-          -f body="$body"
+        node "$GITHUB_ACTION_PATH/scripts/prjury.mjs" \
+          --input "${INPUT_DIR}" \
+          --max-comments "${{ inputs.max-comments }}" \
+          --repo "${{ github.repository }}" \
+          --pr "${PR_NUMBER:-${{ github.event.pull_request.number }}}" \
+          --github-token "${GITHUB_TOKEN}" \
+          --post "${{ inputs.post-review }}" \
+          --openai-key "${OPENAI_KEY}" \
+          --openai-model "${OPENAI_MODEL}" \
+          --openai-base-url "${OPENAI_BASE_URL}"

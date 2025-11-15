@@ -1,26 +1,41 @@
 name: prjury (example)
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+env:
+  PRJURY_INPUT_DIR: outputs
+  RUN_CODEX: ${{ vars.PRJURY_RUN_CODEX || 'false' }}
+  RUN_GEMINI: ${{ vars.PRJURY_RUN_GEMINI || 'false' }}
+  RUN_GREPTILE: ${{ vars.PRJURY_RUN_GREPTILE || 'false' }}
+  RUN_CURSOR: ${{ vars.PRJURY_RUN_CURSOR || 'false' }}
 
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
 
-      # -------- Silent adapters (examples) --------
-      # Codex Action (OpenAI) – force JSON via output schema
-      - name: Codex review (silent)
-        id: codex
+      - run: mkdir -p "$PRJURY_INPUT_DIR"
+
+      - name: Codex adapter (optional)
+        if: ${{ env.RUN_CODEX == 'true' }}
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt: |
             You are a PR reviewer. Emit ONLY JSON array:
             [{"tool":"codex","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
-            Review the diff in this repo for issues.
+            Review the diff for issues.
           output-schema: |
             type Issue = {
               tool: "codex",
@@ -31,11 +46,11 @@ jobs:
               suggestion?: string,
             }
             type Output = Issue[]
-          output-file: outputs/codex.json
+          output-file: ${{ env.PRJURY_INPUT_DIR }}/codex.json
           sandbox: read-only
 
-      # Gemini CLI via official action
-      - name: Gemini review (silent)
+      - name: Gemini adapter (optional)
+        if: ${{ env.RUN_GEMINI == 'true' }}
         id: gemini
         uses: google-github-actions/run-gemini-cli@v0
         with:
@@ -43,27 +58,23 @@ jobs:
           prompt: |
             Emit ONLY JSON array:
             [{"tool":"gemini","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
-            Review changed files in this repo for issues.
+            Review changed files.
           upload_artifacts: "false"
-        continue-on-error: true
-      - name: Persist Gemini JSON
-        if: always()
-        run: |
-          mkdir -p outputs
-          echo '${{ steps.gemini.outputs.summary }}' > outputs/gemini.json
 
-      # Greptile CLI
-      - name: Greptile review (silent)
-        if: ${{ vars.RUN_GREPTILE == 'true' }}
-        continue-on-error: true
+      - name: Persist Gemini JSON
+        if: ${{ env.RUN_GEMINI == 'true' }}
+        run: |
+          echo '${{ steps.gemini.outputs.summary }}' > "${PRJURY_INPUT_DIR}/gemini.json"
+
+      - name: Greptile adapter (optional)
+        if: ${{ env.RUN_GREPTILE == 'true' }}
         env:
           GREPTILE_API_KEY: ${{ secrets.GREPTILE_API_KEY }}
         run: |
-          mkdir -p outputs
           greptile pr review \
             --repo "$GITHUB_REPOSITORY" \
             --pr "${{ github.event.pull_request.number }}" \
-            --format json > outputs/greptile.raw.json || true
+            --format json > "${PRJURY_INPUT_DIR}/greptile.raw.json" || true
           jq '[.findings[] | {
                 tool: "greptile",
                 severity: (.severity // "minor"),
@@ -71,24 +82,23 @@ jobs:
                 line: (.line // .start_line // null),
                 message: (.message // .description // ""),
                 suggestion: (.suggestion // .recommendation // null)
-              }]' outputs/greptile.raw.json > outputs/greptile.json || echo "[]" > outputs/greptile.json
+              }]' "${PRJURY_INPUT_DIR}/greptile.raw.json" > "${PRJURY_INPUT_DIR}/greptile.json" || echo "[]" > "${PRJURY_INPUT_DIR}/greptile.json"
 
-      # Cursor CLI (headless)
-      - name: Cursor review (silent)
-        if: ${{ vars.RUN_CURSOR == 'true' }}
-        continue-on-error: true
-        run: |
-          mkdir -p outputs
-          cursor review --diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" --format json --output outputs/cursor.json || true
+      - name: Cursor adapter (optional)
+        if: ${{ env.RUN_CURSOR == 'true' }}
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          cursor review \
+            --diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" \
+            --format json \
+            --output "${PRJURY_INPUT_DIR}/cursor.json" || true
 
-      # -------- Aggregation + posting --------
       - name: prjury aggregate and post
         uses: ./
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          input-dir: outputs
+          input-dir: ${{ env.PRJURY_INPUT_DIR }}
           max-comments: "15"
           post-review: "true"
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
