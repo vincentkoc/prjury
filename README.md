@@ -64,7 +64,7 @@ env:
 
 jobs:
   codex:
-    if: ${{ env.RUN_CODEX == 'true' }}
+    if: ${{ vars.PRJURY_RUN_CODEX == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,7 +116,7 @@ jobs:
           path: ${{ env.PRJURY_INPUT_DIR }}/codex.json
 
   gemini:
-    if: ${{ env.RUN_GEMINI == 'true' }}
+    if: ${{ vars.PRJURY_RUN_GEMINI == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -155,7 +155,7 @@ jobs:
           path: ${{ env.PRJURY_INPUT_DIR }}/gemini.json
 
   greptile:
-    if: ${{ env.RUN_GREPTILE == 'true' }}
+    if: ${{ vars.PRJURY_RUN_GREPTILE == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -199,7 +199,7 @@ jobs:
           path: ${{ env.PRJURY_INPUT_DIR }}/greptile.json
 
   cursor:
-    if: ${{ env.RUN_CURSOR == 'true' }}
+    if: ${{ vars.PRJURY_RUN_CURSOR == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -251,7 +251,7 @@ jobs:
       - run: mkdir -p "$PRJURY_INPUT_DIR"
 
       - name: Download Codex output
-        if: ${{ env.RUN_CODEX == 'true' }}
+        if: ${{ vars.PRJURY_RUN_CODEX == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: codex-json
@@ -259,7 +259,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Download Gemini output
-        if: ${{ env.RUN_GEMINI == 'true' }}
+        if: ${{ vars.PRJURY_RUN_GEMINI == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: gemini-json
@@ -267,7 +267,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Download Greptile output
-        if: ${{ env.RUN_GREPTILE == 'true' }}
+        if: ${{ vars.PRJURY_RUN_GREPTILE == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: greptile-json
@@ -275,7 +275,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Download Cursor output
-        if: ${{ env.RUN_CURSOR == 'true' }}
+        if: ${{ vars.PRJURY_RUN_CURSOR == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: cursor-json
@@ -292,6 +292,12 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
 ```
 When published, replace `uses: ./` with `uses: prjury/prjury-action@v1`.
+
+Testing
+-------
+- Install deps once: `npm install`.
+- Run `npm test` to execute the Node test suite (see `tests/aggregate.test.mjs`).
+- CI (`.github/workflows/ci.yml`) runs the same tests on pushes and pull requests targeting `main`.
 
 Notes and tips
 --------------

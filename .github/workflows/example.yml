@@ -10,15 +10,13 @@ permissions:
 
 env:
   PRJURY_INPUT_DIR: outputs
-  RUN_CODEX: ${{ vars.PRJURY_RUN_CODEX || 'false' }}
-  RUN_GEMINI: ${{ vars.PRJURY_RUN_GEMINI || 'false' }}
-  RUN_GREPTILE: ${{ vars.PRJURY_RUN_GREPTILE || 'false' }}
-  RUN_CURSOR: ${{ vars.PRJURY_RUN_CURSOR || 'false' }}
 
 jobs:
   codex:
-    if: ${{ env.RUN_CODEX == 'true' }}
+    if: ${{ vars.PRJURY_RUN_CODEX == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      PRJURY_INPUT_DIR: ${{ env.PRJURY_INPUT_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,8 +67,10 @@ jobs:
           path: ${{ env.PRJURY_INPUT_DIR }}/codex.json
 
   gemini:
-    if: ${{ env.RUN_GEMINI == 'true' }}
+    if: ${{ vars.PRJURY_RUN_GEMINI == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      PRJURY_INPUT_DIR: ${{ env.PRJURY_INPUT_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,8 +108,10 @@ jobs:
           path: ${{ env.PRJURY_INPUT_DIR }}/gemini.json
 
   greptile:
-    if: ${{ env.RUN_GREPTILE == 'true' }}
+    if: ${{ vars.PRJURY_RUN_GREPTILE == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      PRJURY_INPUT_DIR: ${{ env.PRJURY_INPUT_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,8 +154,10 @@ jobs:
           path: ${{ env.PRJURY_INPUT_DIR }}/greptile.json
 
   cursor:
-    if: ${{ env.RUN_CURSOR == 'true' }}
+    if: ${{ vars.PRJURY_RUN_CURSOR == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      PRJURY_INPUT_DIR: ${{ env.PRJURY_INPUT_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -194,6 +198,8 @@ jobs:
   review:
     needs: [codex, gemini, greptile, cursor]
     runs-on: ubuntu-latest
+    env:
+      PRJURY_INPUT_DIR: ${{ env.PRJURY_INPUT_DIR }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -204,7 +210,7 @@ jobs:
       - run: mkdir -p "$PRJURY_INPUT_DIR"
 
       - name: Download Codex output
-        if: ${{ env.RUN_CODEX == 'true' }}
+        if: ${{ vars.PRJURY_RUN_CODEX == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: codex-json
@@ -212,7 +218,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Download Gemini output
-        if: ${{ env.RUN_GEMINI == 'true' }}
+        if: ${{ vars.PRJURY_RUN_GEMINI == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: gemini-json
@@ -220,7 +226,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Download Greptile output
-        if: ${{ env.RUN_GREPTILE == 'true' }}
+        if: ${{ vars.PRJURY_RUN_GREPTILE == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: greptile-json
@@ -228,7 +234,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Download Cursor output
-        if: ${{ env.RUN_CURSOR == 'true' }}
+        if: ${{ vars.PRJURY_RUN_CURSOR == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: cursor-json

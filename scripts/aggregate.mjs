@@ -163,7 +163,7 @@ const main = () => {
   );
   const sorted = deduped.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity));
   const trimmed = sorted.slice(0, options.maxComments);
-  const disagreements = findDisagreements(deduped);
+  const disagreements = findDisagreements(issues);
   const toolCounts = {};
   for (const issue of sorted) {
     for (const t of issue.tools || [issue.tool || "unknown"]) {
