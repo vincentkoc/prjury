@@ -107,8 +107,10 @@ jobs:
                       "line": { "type": "integer" },
                       "message": { "type": "string" },
                       "suggestion": { "type": "string" }
-                    }
-                  }
+                    },
+                    "additionalProperties": false
+                  },
+                  "additionalProperties": false
                 }
               },
               "required": ["findings"],
@@ -157,11 +159,13 @@ jobs:
           upload_artifacts: "false"
 
       - run: |
-          resp='${{ steps.gemini.outputs.summary }}'
-          if [ -z "$resp" ]; then
+          cat <<'EOF' > "${PRJURY_INPUT_DIR}/gemini.raw.txt"
+${{ steps.gemini.outputs.summary }}
+EOF
+          if [ ! -s "${PRJURY_INPUT_DIR}/gemini.raw.txt" ]; then
             echo "[]" > "${PRJURY_INPUT_DIR}/gemini.json"
           else
-            printf '%s' "$resp" | jq '.' > "${PRJURY_INPUT_DIR}/gemini.json" || echo "[]" > "${PRJURY_INPUT_DIR}/gemini.json"
+            jq '.' "${PRJURY_INPUT_DIR}/gemini.raw.txt" > "${PRJURY_INPUT_DIR}/gemini.json" || echo "[]" > "${PRJURY_INPUT_DIR}/gemini.json"
           fi
 
       - uses: actions/upload-artifact@v4
