@@ -1,0 +1,97 @@
+name: "prjury meta reviewer"
+description: "Aggregate silent adapter outputs and post a single PR review"
+author: "prjury"
+branding:
+  icon: "check-circle"
+  color: "blue"
+inputs:
+  github-token:
+    description: "Token used for posting the unified review (GITHUB_TOKEN is fine)"
+    required: true
+  post-review:
+    description: "If true, post a PR comment; otherwise only write report files"
+    required: false
+    default: "true"
+  max-comments:
+    description: "Maximum number of comments to emit (highest severity first)"
+    required: false
+    default: "15"
+  input-dir:
+    description: "Directory containing adapter JSON outputs"
+    required: false
+    default: "outputs"
+  pr-number:
+    description: "Explicit PR number (defaults to github.event.pull_request.number)"
+    required: false
+  openai-api-key:
+    description: "Optional OpenAI API key to let the LLM rewrite/aggregate the comment"
+    required: false
+    default: ""
+  openai-model:
+    description: "OpenAI model name for aggregation (default gpt-4o-mini)"
+    required: false
+    default: "gpt-4o-mini"
+  openai-base-url:
+    description: "Override the OpenAI base URL (e.g., Azure/OpenRouter); defaults to https://api.openai.com/v1"
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure Node available
+      shell: bash
+      run: node -v
+
+    - name: Aggregate adapter outputs
+      shell: bash
+      run: |
+        node "$GITHUB_ACTION_PATH/scripts/aggregate.mjs" \
+          --input "${{ inputs.input-dir }}" \
+          --max-comments "${{ inputs.max-comments }}" \
+          --out "${{ inputs.input-dir }}/report"
+
+    - name: LLM aggregation (optional)
+      if: ${{ inputs.openai-api-key != '' }}
+      shell: bash
+      env:
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        OPENAI_MODEL: ${{ inputs.openai-model }}
+        OPENAI_BASE_URL: ${{ inputs.openai-base-url }}
+      run: |
+        node "$GITHUB_ACTION_PATH/scripts/unify-llm.mjs" \
+          --issues "${{ inputs.input-dir }}/report.json" \
+          --fallback "${{ inputs.input-dir }}/report.md" \
+          --out "${{ inputs.input-dir }}/comment.md" \
+          --model "${OPENAI_MODEL}"
+
+    - name: Post unified review
+      if: ${{ inputs.post-review == 'true' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        INPUT_DIR: ${{ inputs.input-dir }}
+      run: |
+        set -euo pipefail
+        PR="${PR_NUMBER:-${{ github.event.pull_request.number }}}"
+        if [[ -z "$PR" ]]; then
+          echo "No PR number available; skipping comment."
+          exit 0
+        fi
+
+        if [[ ! -f "$INPUT_DIR/report.md" ]]; then
+          echo "No report.md found to post; skipping."
+          exit 0
+        fi
+
+        if [[ -f "$INPUT_DIR/comment.md" ]]; then
+          body=$(cat "$INPUT_DIR/comment.md")
+        else
+          body=$(cat "$INPUT_DIR/report.md")
+        fi
+        echo "Posting unified review to PR #$PR"
+        gh api \
+          repos/${{ github.repository }}/pulls/"$PR"/reviews \
+          -f event=COMMENT \
+          -f body="$body"

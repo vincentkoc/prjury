@@ -1,0 +1,73 @@
+name: prjury (example)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------- Silent adapters (examples) --------
+      # Codex Action (OpenAI) – force JSON via output schema
+      - name: Codex review (silent)
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: |
+            You are a PR reviewer. Emit ONLY JSON array:
+            [{"tool":"codex","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
+            Review the diff in this repo for issues.
+          output-schema: |
+            type Issue = {
+              tool: "codex",
+              severity: "blocker" | "major" | "minor" | "nit",
+              file: string,
+              line: number,
+              message: string,
+              suggestion?: string,
+            }
+            type Output = Issue[]
+          output-file: outputs/codex.json
+          sandbox: read-only
+
+      # Gemini CLI via official action
+      - name: Gemini review (silent)
+        id: gemini
+        uses: google-github-actions/run-gemini-cli@v0
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            Emit ONLY JSON array:
+            [{"tool":"gemini","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
+            Review changed files in this repo for issues.
+          upload_artifacts: "false"
+        continue-on-error: true
+      - name: Persist Gemini JSON
+        if: always()
+        run: |
+          mkdir -p outputs
+          echo '${{ steps.gemini.outputs.summary }}' > outputs/gemini.json
+
+      # Cursor CLI (headless)
+      - name: Cursor review (silent)
+        if: ${{ vars.RUN_CURSOR == 'true' }}
+        continue-on-error: true
+        run: |
+          mkdir -p outputs
+          cursor review --diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" --format json --output outputs/cursor.json || true
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+
+      # -------- Aggregation + posting --------
+      - name: prjury aggregate and post
+        uses: ./
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          input-dir: outputs
+          max-comments: "15"
+          post-review: "true"
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
