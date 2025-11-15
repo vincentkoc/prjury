@@ -3,6 +3,10 @@ prjury (meta PR review bot)
 
 Goal: run multiple code-review AIs/tools inside a single GitHub Action job, collect their findings silently, deduplicate, and post one unified review as `prjury`. No hosting/server needed.
 
+License
+-------
+Apache 2.0 (`LICENSE` file). This keeps adoption friction low for enterprises while preserving patent protection.
+
 How it works
 ------------
 - A workflow runs on `pull_request`.
