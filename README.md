@@ -93,22 +93,31 @@ jobs:
             Review the diff in this repo for issues.
           output-schema: |
             {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": ["tool", "severity", "file", "line", "message"],
-                "properties": {
-                  "tool": { "const": "codex" },
-                  "severity": { "enum": ["blocker", "major", "minor", "nit"] },
-                  "file": { "type": "string" },
-                  "line": { "type": "integer" },
-                  "message": { "type": "string" },
-                  "suggestion": { "type": "string" }
+              "type": "object",
+              "properties": {
+                "findings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["tool", "severity", "file", "line", "message"],
+                    "properties": {
+                      "tool": { "const": "codex" },
+                      "severity": { "enum": ["blocker", "major", "minor", "nit"] },
+                      "file": { "type": "string" },
+                      "line": { "type": "integer" },
+                      "message": { "type": "string" },
+                      "suggestion": { "type": "string" }
+                    }
+                  }
                 }
-              }
+              },
+              "required": ["findings"],
+              "additionalProperties": false
             }
-          output-file: ${{ env.PRJURY_INPUT_DIR }}/codex.json
+          output-file: ${{ env.PRJURY_INPUT_DIR }}/codex.raw.json
           sandbox: read-only
+
+      - run: jq '.findings // []' "${PRJURY_INPUT_DIR}/codex.raw.json" > "${PRJURY_INPUT_DIR}/codex.json"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -147,7 +156,13 @@ jobs:
             Review changed files.
           upload_artifacts: "false"
 
-      - run: echo '${{ steps.gemini.outputs.summary }}' > "${PRJURY_INPUT_DIR}/gemini.json"
+      - run: |
+          resp='${{ steps.gemini.outputs.summary }}'
+          if [ -z "$resp" ]; then
+            echo "[]" > "${PRJURY_INPUT_DIR}/gemini.json"
+          else
+            printf '%s' "$resp" | jq '.' > "${PRJURY_INPUT_DIR}/gemini.json" || echo "[]" > "${PRJURY_INPUT_DIR}/gemini.json"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -217,8 +232,7 @@ jobs:
       - run: mkdir -p "$PRJURY_INPUT_DIR"
 
       - name: Install cursor CLI
-        run: npm install -g @cursorai/cli || npm install -g cursor-ai-cli
-        continue-on-error: true
+        run: npm install -g cursor-cli || true
 
       - name: Cursor adapter
         env:
