@@ -44,7 +44,7 @@ If you provide `openai-api-key`, the action will call `scripts/unify-llm.mjs` to
 
 Example workflow (fork-safe, toggle adapters)
 ---------------------------------------------
-Works on external PRs (via `pull_request_target`) and lets you flip adapters via repo variables (`PRJURY_RUN_CODEX`, etc.). Secrets (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GREPTILE_API_KEY`, `CURSOR_API_KEY`) supply the upstream tools and the meta review.
+Runs on `pull_request_target` so forks are safe, caches each adapter's CLI, and executes adapters in parallel jobs. Enable adapters by setting repo variables (`PRJURY_RUN_CODEX`, etc.) and storing the matching secrets (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GREPTILE_API_KEY`, `CURSOR_API_KEY`).
 ```yaml
 name: prjury
 on:
@@ -63,7 +63,183 @@ env:
   RUN_CURSOR: ${{ vars.PRJURY_RUN_CURSOR || 'false' }}
 
 jobs:
+  codex:
+    if: ${{ env.RUN_CODEX == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Cache Codex CLI state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.codex
+          key: ${{ runner.os }}-codex-cli-v1
+
+      - run: mkdir -p "$PRJURY_INPUT_DIR"
+
+      - name: Codex adapter
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: |
+            You are a PR reviewer. Emit ONLY JSON array:
+            [{"tool":"codex","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
+            Review the diff in this repo for issues.
+          output-schema: |
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["tool", "severity", "file", "line", "message"],
+                "properties": {
+                  "tool": { "const": "codex" },
+                  "severity": { "enum": ["blocker", "major", "minor", "nit"] },
+                  "file": { "type": "string" },
+                  "line": { "type": "integer" },
+                  "message": { "type": "string" },
+                  "suggestion": { "type": "string" }
+                }
+              }
+            }
+          output-file: ${{ env.PRJURY_INPUT_DIR }}/codex.json
+          sandbox: read-only
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-json
+          path: ${{ env.PRJURY_INPUT_DIR }}/codex.json
+
+  gemini:
+    if: ${{ env.RUN_GEMINI == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Cache Gemini CLI state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            .gemini
+          key: ${{ runner.os }}-gemini-cli-v1
+
+      - run: mkdir -p "$PRJURY_INPUT_DIR"
+
+      - name: Gemini adapter
+        id: gemini
+        uses: google-github-actions/run-gemini-cli@v0
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_model: gemini-2.5-flash
+          prompt: |
+            Emit ONLY JSON array:
+            [{"tool":"gemini","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
+            Review changed files.
+          upload_artifacts: "false"
+
+      - run: echo '${{ steps.gemini.outputs.summary }}' > "${PRJURY_INPUT_DIR}/gemini.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gemini-json
+          path: ${{ env.PRJURY_INPUT_DIR }}/gemini.json
+
+  greptile:
+    if: ${{ env.RUN_GREPTILE == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Cache greptile CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/greptile
+          key: ${{ runner.os }}-greptile-cli-v1
+
+      - run: mkdir -p "$PRJURY_INPUT_DIR"
+
+      - name: Install greptile CLI
+        run: pip install --user greptile-cli
+
+      - name: Greptile adapter
+        env:
+          GREPTILE_API_KEY: ${{ secrets.GREPTILE_API_KEY }}
+          PATH: ${{ env.PATH }}:~/.local/bin
+        run: |
+          greptile pr review \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --format json > "${PRJURY_INPUT_DIR}/greptile.raw.json" || true
+          jq '[.findings[] | {
+                tool: "greptile",
+                severity: (.severity // "minor"),
+                file: (.file // .path // ""),
+                line: (.line // .start_line // null),
+                message: (.message // .description // ""),
+                suggestion: (.suggestion // .recommendation // null)
+              }]' "${PRJURY_INPUT_DIR}/greptile.raw.json" > "${PRJURY_INPUT_DIR}/greptile.json" || echo "[]" > "${PRJURY_INPUT_DIR}/greptile.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greptile-json
+          path: ${{ env.PRJURY_INPUT_DIR }}/greptile.json
+
+  cursor:
+    if: ${{ env.RUN_CURSOR == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Cache cursor CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/cursor
+          key: ${{ runner.os }}-cursor-cli-v1
+
+      - run: mkdir -p "$PRJURY_INPUT_DIR"
+
+      - name: Install cursor CLI
+        run: npm install -g @cursorai/cli || npm install -g cursor-ai-cli
+        continue-on-error: true
+
+      - name: Cursor adapter
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          if command -v cursor >/dev/null 2>&1; then
+            cursor review \
+              --diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" \
+              --format json \
+              --output "${PRJURY_INPUT_DIR}/cursor.json" || true
+          else
+            echo "cursor CLI not installed; skipping." && echo "[]" > "${PRJURY_INPUT_DIR}/cursor.json"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cursor-json
+          path: ${{ env.PRJURY_INPUT_DIR }}/cursor.json
+
   review:
+    needs: [codex, gemini, greptile, cursor]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,79 +250,48 @@ jobs:
 
       - run: mkdir -p "$PRJURY_INPUT_DIR"
 
-      - name: Codex adapter (optional)
+      - name: Download Codex output
         if: ${{ env.RUN_CODEX == 'true' }}
-        uses: openai/codex-action@v1
+        uses: actions/download-artifact@v4
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt: |
-            You are a PR reviewer. Emit ONLY JSON array:
-            [{"tool":"codex","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
-            Review the diff in this repo for issues.
-          output-schema: |
-            type Issue = {
-              tool: "codex",
-              severity: "blocker" | "major" | "minor" | "nit",
-              file: string,
-              line: number,
-              message: string,
-              suggestion?: string,
-            }
-            type Output = Issue[]
-          output-file: ${{ env.PRJURY_INPUT_DIR }}/codex.json
-          sandbox: read-only
+          name: codex-json
+          path: ${{ env.PRJURY_INPUT_DIR }}
+          if-no-files-found: ignore
 
-      - name: Gemini adapter (optional)
+      - name: Download Gemini output
         if: ${{ env.RUN_GEMINI == 'true' }}
-        id: gemini
-        uses: google-github-actions/run-gemini-cli@v0
+        uses: actions/download-artifact@v4
         with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          prompt: |
-            Emit ONLY JSON array:
-            [{"tool":"gemini","severity":"blocker|major|minor|nit","file":"path","line":0,"message":"...", "suggestion":"..."}]
-            Review changed files.
-          upload_artifacts: "false"
-      - name: Persist Gemini JSON
-        if: ${{ env.RUN_GEMINI == 'true' }}
-        run: |
-          echo '${{ steps.gemini.outputs.summary }}' > "${PRJURY_INPUT_DIR}/gemini.json"
+          name: gemini-json
+          path: ${{ env.PRJURY_INPUT_DIR }}
+          if-no-files-found: ignore
 
-      - name: Greptile adapter (optional)
+      - name: Download Greptile output
         if: ${{ env.RUN_GREPTILE == 'true' }}
-        env:
-          GREPTILE_API_KEY: ${{ secrets.GREPTILE_API_KEY }}
-        run: |
-          greptile pr review             --repo "$GITHUB_REPOSITORY"             --pr "${{ github.event.pull_request.number }}"             --format json > "${PRJURY_INPUT_DIR}/greptile.raw.json" || true
-          jq '[.findings[] | {
-                tool: "greptile",
-                severity: (.severity // "minor"),
-                file: (.file // .path // ""),
-                line: (.line // .start_line // null),
-                message: (.message // .description // ""),
-                suggestion: (.suggestion // .recommendation // null)
-              }]' "${PRJURY_INPUT_DIR}/greptile.raw.json" > "${PRJURY_INPUT_DIR}/greptile.json" || echo "[]" > "${PRJURY_INPUT_DIR}/greptile.json"
+        uses: actions/download-artifact@v4
+        with:
+          name: greptile-json
+          path: ${{ env.PRJURY_INPUT_DIR }}
+          if-no-files-found: ignore
 
-      - name: Cursor adapter (optional)
+      - name: Download Cursor output
         if: ${{ env.RUN_CURSOR == 'true' }}
-        env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-        run: |
-          cursor review             --diff "origin/${{ github.event.pull_request.base.ref }}...HEAD"             --format json             --output "${PRJURY_INPUT_DIR}/cursor.json" || true
+        uses: actions/download-artifact@v4
+        with:
+          name: cursor-json
+          path: ${{ env.PRJURY_INPUT_DIR }}
+          if-no-files-found: ignore
 
       - name: prjury (aggregate + review)
         uses: ./
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }} # used only for posting
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           input-dir: ${{ env.PRJURY_INPUT_DIR }}
           max-comments: "15"
           post-review: "true"
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }} # optional LLM rewrite
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
 ```
 When published, replace `uses: ./` with `uses: prjury/prjury-action@v1`.
-
-Notes and tips
---------------
 
 Notes and tips
 --------------
@@ -157,6 +302,8 @@ Notes and tips
 - If you want to use non-OpenAI providers, set `openai-base-url` and ensure the provider follows the OpenAI-compatible chat completions API.
 - All upstream calls (Codex/OpenAI, Gemini, Greptile, Cursor) use the caller’s secrets/credits; prjury does not proxy or host anything.
 - The unified output includes tool labels per finding and a Disagreements section when tools diverge on severity at the same location.
+- Gemini defaults to `gemini-2.5-flash` in the snippets above—override `gemini_model` if you need something else.
+- Adapters hand off results via artifacts so they can run in parallel jobs; caches (`actions/cache@v4`) keep their CLIs warm between runs.
 
 Development status
 ------------------
