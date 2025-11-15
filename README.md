@@ -43,7 +43,7 @@ If you provide `openai-api-key`, the action will call `scripts/unify-llm.mjs` to
 
 Example workflow (everything in-action, no hosting)
 ---------------------------------------------------
-This demonstrates running adapters silently (Codex Action, Gemini CLI, Cursor CLI) and letting `prjury` post a PR **review** (not just an issue comment):
+This demonstrates running adapters silently (Codex Action, Gemini CLI, Greptile CLI, Cursor CLI) and letting `prjury` post a PR **review** (not just an issue comment):
 ```yaml
 name: prjury
 on:
@@ -96,6 +96,27 @@ jobs:
           mkdir -p outputs
           echo '${{ steps.gemini.outputs.summary }}' > outputs/gemini.json
 
+      # Greptile CLI (headless). Capture its JSON and reshape into prjury schema.
+      - name: Greptile review (silent)
+        if: ${{ vars.RUN_GREPTILE == 'true' }}
+        continue-on-error: true
+        env:
+          GREPTILE_API_KEY: ${{ secrets.GREPTILE_API_KEY }}
+        run: |
+          mkdir -p outputs
+          greptile pr review \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --format json > outputs/greptile.raw.json || true
+          jq '[.findings[] | {
+                tool: "greptile",
+                severity: (.severity // "minor"),
+                file: (.file // .path // ""),
+                line: (.line // .start_line // null),
+                message: (.message // .description // ""),
+                suggestion: (.suggestion // .recommendation // null)
+              }]' outputs/greptile.raw.json > outputs/greptile.json || echo "[]" > outputs/greptile.json
+
       # Adapter 3: Cursor CLI (headless). Adjust flags per your version; keep GH token out.
       - name: Cursor review (silent)
         if: ${{ vars.RUN_CURSOR == 'true' }}
@@ -125,7 +146,7 @@ Notes and tips
 - `post-review: "false"` lets you dry-run and only archive `outputs/report.*`.
 - Tune `max-comments` to control noise; severity order: blocker > major > minor > nit.
 - If you want to use non-OpenAI providers, set `openai-base-url` and ensure the provider follows the OpenAI-compatible chat completions API.
-- All upstream calls (Codex/OpenAI, Gemini, Cursor) use the caller’s secrets/credits; prjury does not proxy or host anything.
+- All upstream calls (Codex/OpenAI, Gemini, Greptile, Cursor) use the caller’s secrets/credits; prjury does not proxy or host anything.
 - The unified output includes tool labels per finding and a Disagreements section when tools diverge on severity at the same location.
 
 Development status

@@ -52,6 +52,27 @@ jobs:
           mkdir -p outputs
           echo '${{ steps.gemini.outputs.summary }}' > outputs/gemini.json
 
+      # Greptile CLI
+      - name: Greptile review (silent)
+        if: ${{ vars.RUN_GREPTILE == 'true' }}
+        continue-on-error: true
+        env:
+          GREPTILE_API_KEY: ${{ secrets.GREPTILE_API_KEY }}
+        run: |
+          mkdir -p outputs
+          greptile pr review \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --format json > outputs/greptile.raw.json || true
+          jq '[.findings[] | {
+                tool: "greptile",
+                severity: (.severity // "minor"),
+                file: (.file // .path // ""),
+                line: (.line // .start_line // null),
+                message: (.message // .description // ""),
+                suggestion: (.suggestion // .recommendation // null)
+              }]' outputs/greptile.raw.json > outputs/greptile.json || echo "[]" > outputs/greptile.json
+
       # Cursor CLI (headless)
       - name: Cursor review (silent)
         if: ${{ vars.RUN_CURSOR == 'true' }}
